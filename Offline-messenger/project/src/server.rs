@@ -35,6 +35,7 @@ struct Commands {
     command_type: CommandType,
     command_received: String,
     user: Option<String>,
+    connection_manager : Option<Arc<Mutex<ConnectionManager>>>,
 }
 
 struct User {
@@ -62,12 +63,14 @@ impl Commands {
         command_type: CommandType,
         command_received: String,
         user: Option<String>,
+        connection_manager: Option<Arc<Mutex<ConnectionManager>>>,
     ) -> Self {
         Commands {
             socket_addr,
             command_type,
             command_received, // partea mesajului primit fara tipul comenzii specificat
             user,
+            connection_manager,
         }
     }
 
@@ -104,19 +107,22 @@ impl Commands {
         part.next();
         part.next();
         let user = part.next();
-        let index_msg_str = part.next().ok_or("Missing index_msg").unwrap();
-        let mut index_msg = index_msg_str
-            .parse::<usize>()
-            .map_err(|_| "Failed to cast to usize")
-            .unwrap();
-        part.next();
-    
-        let path = format!("history_of_lobbies/{}History.txt", self.user.clone().unwrap());
+
+        let mut result = String::new();
+        while let Some(substring) = part.next() {
+            result.push_str(substring);
+            result.push(' ');
+        }
+
+        let path = format!(
+            "history_of_lobbies/{}History.txt",
+            self.user.clone().unwrap()
+        );
 
         if let Ok(file) = File::open(&path) {
             let reader = BufReader::new(file);
             let mut messages = Vec::new();
-    
+
             for line in reader.lines() {
                 if let Ok(line_content) = line {
                     messages.push(line_content);
@@ -124,36 +130,29 @@ impl Commands {
                     eprintln!("Error reading line");
                 }
             }
-    
+
             for line in messages.iter().rev() {
                 if line.contains(user.unwrap_or("")) {
-                    if index_msg == 1 {
-                        if let Err(err) = stream.write_all(
-                            format!(
-                                "---- History of conversation from < {} > ----\n",
-                                self.command_received
-                            )
-                            .as_bytes(),
-                        ) {
-                            eprintln!("Error writing to client: {}", err);
-                        }
-    
-                        let line_bytes = line.as_bytes();
-                        if let Err(err) = stream.write_all(line_bytes) {
-                            eprintln!("Error writing to client: {}", err);
-                        }
-    
-                        if let Err(err) = stream.write_all(b"\n----------------------------\n") {
-                            eprintln!("Error writing to client: {}", err);
-                        }
-    
-                        return; 
-                    } else {
-                        index_msg -= 1;
-                    }
+                    let final_messsage = format!("replied to: {} =>: {}", line.clone(), result);
+                    write_to_history_lobby(
+                        self.user.clone().unwrap(),
+                        final_messsage
+                            .clone()
+                            .trim_matches(|c| c == ' ' || c == '\0')
+                            .to_string(),
+                    );
+                    let cleaned_name: String = final_messsage.trim().to_string();
+                    println!("{}",cleaned_name.clone());
+                    send(
+                        self.user.clone().unwrap(),
+                        final_messsage,
+                        self.connection_manager.clone().unwrap(),
+                        self.socket_addr,
+                    );
+                    return;
                 }
             }
-            if let Err(err) = stream.write_all(b"\nMessage not found!\n") {
+            if let Err(err) = stream.write_all(b"\nUser not found!\n") {
                 eprintln!("Error writing to client: {}", err);
             }
         } else {
@@ -162,7 +161,7 @@ impl Commands {
             }
         }
     }
-    
+
     fn historyuser(&mut self, stream: &mut TcpStream) {
         let name_user: String = self
             .user
@@ -698,7 +697,6 @@ fn find_user_in_users(user: String) -> bool {
     let reader = BufReader::new(file);
 
     for line in reader.lines() {
-
         if let Ok(line) = line {
             if line.trim() == user {
                 return false;
@@ -813,7 +811,7 @@ fn handle_connection(
     let mut connected = false;
     let mut user_connected = User { user: None };
     let mut connected_to_a_lobby = false;
-    let mut lobby : Option<String> = None;
+    let mut lobby: Option<String> = None;
     // let mut rng = OsRng;
     // let bits = 1024;
     // let private_key = RSAPrivateKey::new(&mut rng, bits).expect("Generation failed!");
@@ -869,7 +867,7 @@ fn handle_connection(
                     match command_type {
                         CommandType::Help => {
                             let mut command =
-                                Commands::new(socket_addr, command_type, subtext, None);
+                                Commands::new(socket_addr, command_type, subtext, None,None);
                             command.execute_command(&mut stream);
                         }
                         CommandType::Inbox => {
@@ -877,7 +875,8 @@ fn handle_connection(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                Some(user_connected.user.clone().unwrap_or_default()),
+                                Some(user_connected.user.clone().unwrap_or_default()), 
+                                None
                             );
                             command.execute_command(&mut stream);
                         }
@@ -886,7 +885,8 @@ fn handle_connection(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                user_connected.user.clone(),
+                                user_connected.user.clone(), 
+                                None
                             );
                             command.execute_command(&mut stream);
                         }
@@ -895,7 +895,8 @@ fn handle_connection(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                Some(user_connected.user.clone().unwrap_or_default()),
+                                Some(user_connected.user.clone().unwrap_or_default()), 
+                                None,
                             );
                             if command.execute_command(&mut stream) {
                                 user_connected.user = None;
@@ -907,7 +908,7 @@ fn handle_connection(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                user_connected.user.clone(),
+                                user_connected.user.clone(),None
                             );
                             command.execute_command(&mut stream);
                         }
@@ -916,7 +917,7 @@ fn handle_connection(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                user_connected.user.clone(),
+                                user_connected.user.clone(), None
                             );
                             command.execute_command(&mut stream);
                         }
@@ -925,7 +926,7 @@ fn handle_connection(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                user_connected.user.clone(),
+                                user_connected.user.clone(), None
                             );
                             if connected {
                                 if command.execute_command(&mut stream) {}
@@ -940,7 +941,7 @@ fn handle_connection(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                user_connected.user.clone(),
+                                user_connected.user.clone(), None
                             );
                             if connected {
                                 command.execute_command(&mut stream);
@@ -955,7 +956,7 @@ fn handle_connection(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                user_connected.user.clone(),
+                                user_connected.user.clone(), None
                             );
                             if connected {
                                 if command.execute_command(&mut stream) {
@@ -989,7 +990,7 @@ fn handle_connection(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                Some(rest_of_message_clone),
+                                Some(rest_of_message_clone), None
                             );
                             if command.execute_command(&mut stream) {
                                 user_connected.user = Some(rest_of_message.clone());
@@ -998,7 +999,7 @@ fn handle_connection(
                         }
                         _ => {
                             let mut command =
-                                Commands::new(socket_addr, command_type, subtext, None);
+                                Commands::new(socket_addr, command_type, subtext, None, None);
                             command.execute_command(&mut stream);
                         }
                     }
@@ -1035,27 +1036,30 @@ fn handle_connection(
                                     }
                                     lobby = None;
                                     break;
-                                }
-                                else
-                                {
-                                if comm == "-reply" {
-                                    let mut command: Commands = Commands::new(
-                                        socket_addr,
-                                        CommandType::Reply,
-                                        message_to_send.clone(),
-                                        lobby.clone(),
-                                    );
-                                    if connected {
-                                        command.execute_command(&mut stream);
-                                    } else {
-                                        if let Err(er) = stream.write_all(b"\nUser not connected\n ") {
-                                            eprintln!("Error writing to client: {er}");
+                                } else if comm == "-reply" {
+                                        let mut command: Commands = Commands::new(
+                                            socket_addr,
+                                            CommandType::Reply,
+                                            message_to_send.clone(),
+                                            lobby.clone(),
+                                            Some(connection_manager.clone()),
+                                        );
+                                        if connected {
+                                            command.execute_command(&mut stream);
+                                        } else {
+                                            if let Err(er) =
+                                                stream.write_all(b"\nUser not connected\n ")
+                                            {
+                                                eprintln!("Error writing to client: {er}");
+                                            }
                                         }
                                     }
-                                } }
+                                else {
+
                                 write_to_history_lobby(
                                     rest_of_message.clone(),
-                                    message_to_send.clone()
+                                    message_to_send
+                                        .clone()
                                         .trim_matches(|c| c == ' ' || c == '\0')
                                         .to_string(),
                                 );
@@ -1065,6 +1069,7 @@ fn handle_connection(
                                     connection_manager.clone(),
                                     socket_addr,
                                 );
+                            }
                             }
                             Err(err) => {
                                 println!("Error reading from the client: {}", err);
