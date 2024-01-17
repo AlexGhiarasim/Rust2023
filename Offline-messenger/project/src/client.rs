@@ -3,8 +3,16 @@ use std::net::TcpStream;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-//use rand::rngs::OsRng;
-//use rsa::{RSAPrivateKey, PaddingScheme, PublicKey};
+
+fn encrypt_decrypt(data: &[u8], key: &[u8]) -> Vec<u8> {
+    if key.is_empty() {
+        panic!("Key cannot be empty.");
+    }
+    data.iter()
+        .zip(key.iter().cycle())
+        .map(|(&byte, &key_byte)| byte ^ key_byte)
+        .collect()
+}
 
 fn main() {
     let mut client = TcpStream::connect("127.0.0.1:2908").expect("Failed to connect");
@@ -14,41 +22,10 @@ fn main() {
 
     let (sender, _receiver) = mpsc::channel::<String>();
     let (connection_sender, connection_receiver) = mpsc::channel::<String>();
-
-    // let mut key_size_buf = [0; 4];
-    // loop {
-    //     match client.read(&mut key_size_buf) {
-    //         Ok(0) => {
-    //             println!("Server disconnected");
-    //             break;
-    //         }
-    //         Ok(n) => {
-    //             if n == 4 {
-    //                 break;
-    //             }
-    //             // Wait for more data to be available
-    //             thread::sleep(Duration::from_millis(100));
-    //         }
-    //         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-    //             // Wait for more data to be available
-    //             thread::sleep(Duration::from_millis(100));
-    //         }
-    //         Err(e) => {
-    //             panic!("Failed to read key size: {}", e);
-    //         }
-    //     }
-    // }
-
-    // let key_size = u32::from_be_bytes(key_size_buf);
-
-    // Primim cheia privată
-    // let mut private_key_bytes = vec![0; key_size as usize];
-    // client.read(&mut private_key_bytes).expect("Failed to read private key");
-
-    // // Reconstruim cheia privată
-    // let private_key = RSAPrivateKey::from_pkcs1(&private_key_bytes).expect("Failed to deserialize private key");
-    // let public_key: rsa::RSAPublicKey = private_key.clone().into();
-    // let mut rng = OsRng;
+    let my_key: [u8; 30] = [
+        245, 44, 154, 236, 202, 228, 72, 138, 13, 89, 221, 96, 6, 228, 241, 17, 100, 147, 7, 91,
+        192, 15, 168, 238, 44, 58, 106, 209, 155, 162,
+    ];
 
     let mut cloned_client = client.try_clone().expect("Failed to clone client");
     let mut connected = false;
@@ -109,7 +86,7 @@ fn main() {
         }
         thread::sleep(Duration::from_millis(30));
         let mut buff = String::new();
-        buff.reserve(50);
+        buff.reserve(100);
         io::stdout().flush().expect("Failed to flush stdout");
 
         io::stdin().read_line(&mut buff).expect("Eroare la citire");
@@ -133,12 +110,21 @@ fn main() {
         }
         if sender.send(msg.clone()).is_ok() {
             let mut buff = msg.to_string().into_bytes();
-            buff.resize(50, 0);
-            // !!! let encrypted_text = public_key.encrypt(&mut rng, PaddingScheme::new_pkcs1v15_encrypt(), &buff).expect("Criptarea a eșuat");
-            if let Err(er) = client.write_all(&buff) {
-                println!("Failed to send message to server: {er}");
-                break;
-            }
+            buff.resize(100, 0);
+            if !lobby {
+                let buffer = encrypt_decrypt(buff.as_slice(), &my_key);
+                if let Err(er) = client.write_all(&buffer) {
+                    println!("Failed to send message to server: {er}");
+                    break;
+                }
+            } else if let Err(er) = client.write_all(&buff) {
+                    println!("Failed to send message to server: {er}");
+                    break;
+                }
+            
+        }
+        if buff.contains("-quit") && !lobby {
+            break;
         }
         thread::sleep(Duration::from_millis(20));
         while let Ok(message) = connection_receiver.try_recv() {
