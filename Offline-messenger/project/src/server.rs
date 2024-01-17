@@ -9,9 +9,6 @@ use std::str::from_utf8;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
-//use rsa::PrivateKeyEncoding;
-//use rsa::{PaddingScheme, PublicKey, RSAPrivateKey, RSAPublicKey};
-//use rand::rngs::OsRng;
 
 #[derive(Debug, PartialEq)]
 
@@ -29,13 +26,14 @@ enum CommandType {
     HistoryLobby,
     HistoryUser,
     Reply,
+    Quit,
 }
 struct Commands {
     socket_addr: SocketAddr,
     command_type: CommandType,
     command_received: String,
     user: Option<String>,
-    connection_manager : Option<Arc<Mutex<ConnectionManager>>>,
+    connection_manager: Option<Arc<Mutex<ConnectionManager>>>,
 }
 
 struct User {
@@ -98,18 +96,25 @@ impl Commands {
             CommandType::HistoryLobby => self.historylobby(stream),
             CommandType::HistoryUser => self.historyuser(stream),
             CommandType::Reply => self.reply(stream),
+            CommandType::Quit => self.quit(stream),
         }
         true
     }
+    fn quit(&mut self, stream: &mut TcpStream)
+    {
+        if let Err(er) = stream.write_all(b"\n Deconnected successfully from server!\n")
+        {
+            eprintln!("Error writing to client: {er}");
+        }
+    }
     fn reply(&mut self, stream: &mut TcpStream) {
-        println!("da");
         let mut part = self.command_received.split(|c| c == ' ' || c == '\0');
-        part.next();
+        let from_user = part.next().unwrap();
         part.next();
         let user = part.next();
 
         let mut result = String::new();
-        while let Some(substring) = part.next() {
+        for substring in part {
             result.push_str(substring);
             result.push(' ');
         }
@@ -119,7 +124,7 @@ impl Commands {
             self.user.clone().unwrap()
         );
 
-        if let Ok(file) = File::open(&path) {
+        if let Ok(file) = File::open(path) {
             let reader = BufReader::new(file);
             let mut messages = Vec::new();
 
@@ -133,7 +138,12 @@ impl Commands {
 
             for line in messages.iter().rev() {
                 if line.contains(user.unwrap_or("")) {
-                    let final_messsage = format!("replied to: {} =>: {}", line.clone(), result);
+                    let final_messsage = format!(
+                        "replied to:( {} ) =>> {} {}",
+                        line.clone(),
+                        from_user,
+                        result
+                    );
                     write_to_history_lobby(
                         self.user.clone().unwrap(),
                         final_messsage
@@ -141,11 +151,9 @@ impl Commands {
                             .trim_matches(|c| c == ' ' || c == '\0')
                             .to_string(),
                     );
-                    let cleaned_name: String = final_messsage.trim().to_string();
-                    println!("{}",cleaned_name.clone());
                     send(
                         self.user.clone().unwrap(),
-                        final_messsage,
+                        final_messsage.trim().to_string(),
                         self.connection_manager.clone().unwrap(),
                         self.socket_addr,
                     );
@@ -155,11 +163,10 @@ impl Commands {
             if let Err(err) = stream.write_all(b"\nUser not found!\n") {
                 eprintln!("Error writing to client: {}", err);
             }
-        } else {
-            if let Err(err) = stream.write_all(b"\nHistory unavailable!\n") {
+        } else if let Err(err) = stream.write_all(b"\nHistory unavailable!\n") {
                 eprintln!("Error writing to client: {}", err);
             }
-        }
+        
     }
 
     fn historyuser(&mut self, stream: &mut TcpStream) {
@@ -171,7 +178,7 @@ impl Commands {
             .filter(|&c| c != '\0')
             .collect();
         let path = format!("history_of_conv_for_users/{}History.txt", name_user);
-        if let Ok(file) = File::open(&path) {
+        if let Ok(file) = File::open(path) {
             let reader = BufReader::new(file);
             let mut ultimele50 = Vec::with_capacity(50);
 
@@ -205,11 +212,10 @@ impl Commands {
             if let Err(err) = stream.write_all(b"\n      ------------------------------\n") {
                 eprintln!("Error writing to client: {}", err);
             }
-        } else {
-            if let Err(err) = stream.write_all(b"\nHistory unavailable!\n") {
+        } else if let Err(err) = stream.write_all(b"\nHistory unavailable!\n") {
                 eprintln!("Error writing to client: {}", err);
             }
-        }
+        
     }
     fn historylobby(&mut self, stream: &mut TcpStream) {
         let name_lobby: String = self
@@ -218,7 +224,7 @@ impl Commands {
             .filter(|&c| c != '\0')
             .collect();
         let path = format!("history_of_lobbies/{}History.txt", name_lobby);
-        if let Ok(file) = File::open(&path) {
+        if let Ok(file) = File::open(path) {
             let reader = BufReader::new(file);
             let mut ultimele50 = Vec::with_capacity(50);
 
@@ -252,11 +258,10 @@ impl Commands {
             if let Err(err) = stream.write_all(b"\n      ------------------------------\n") {
                 eprintln!("Error writing to client: {}", err);
             }
-        } else {
-            if let Err(err) = stream.write_all(b"\nHistory unavailable!\n") {
+        } else if let Err(err) = stream.write_all(b"\nHistory unavailable!\n") {
                 eprintln!("Error writing to client: {}", err);
             }
-        }
+        
     }
     fn deletelobby(&mut self, stream: &mut TcpStream) {
         let mut name_lobby = self.command_received.split(" \0");
@@ -281,18 +286,16 @@ impl Commands {
                 if let Err(er) = stream.write_all(b"\nLobby deleted successfully!\n") {
                     eprintln!("Error writing to client: {er}");
                 }
-            } else {
-                if let Err(er) = stream.write_all(b"\nLobby doesn't exist!\n") {
+            } else if let Err(er) = stream.write_all(b"\nLobby doesn't exist!\n") {
                     eprintln!("Error writing to client: {er}");
                 }
-            }
-        } else {
-            if let Err(er) =
+            
+        } else if let Err(er) =
                 stream.write_all(b"\nName for lobby invalid! Try -delete <name_for_lobby>\n")
             {
                 eprintln!("Error writing to client: {er}");
             }
-        }
+        
     }
 
     fn joinlobby(&mut self, stream: &mut TcpStream) -> bool {
@@ -322,13 +325,12 @@ impl Commands {
                 eprintln!("Error writing to client: {er}");
             }
             return false;
-        } else {
-            if let Err(er) =
+        } else if let Err(er) =
                 stream.write_all(b"\nName for lobby invalid! Try -join <name_for_lobby>\n")
             {
                 eprintln!("Error writing to client: {er}");
             }
-        }
+        
         false
     }
     fn createlobby(&mut self, stream: &mut TcpStream) {
@@ -360,16 +362,15 @@ impl Commands {
             if let Err(er) = stream.write_all(b"\nLobby created successfully!\n") {
                 eprintln!("Error writing to client: {er}");
             }
-        } else {
-            if let Err(er) =
+        } else if let Err(er) =
                 stream.write_all(b"\nName for lobby invalid! Try -create <name_for_lobby>\n")
             {
                 eprintln!("Error writing to client: {er}");
             }
-        }
+        
     }
     fn help(&mut self, stream: &mut TcpStream) {
-        if let Err(err) = stream.write_all(b"       --- commands --- \n -help \n -register <username> \n -login <usermane> \n -logout \n -send <username> <message> \n") 
+        if let Err(err) = stream.write_all(b"       --- commands --- \n -help \n -register <username> \n -login <usermane> \n -logout \n -send <username> <message> \n -inbox \n -join <lobby \n -create <lobby> \n -delete <lobby> \n -historylobby <lobby> \n -historyuser \n -quitlobby \n -reply <user> <message> \n -quit\n") 
         {
             println!("Error writing to stream in help: {:?}", err);
         }
@@ -780,8 +781,7 @@ fn remove_user_from_lobby(
             .contains(&client_address.to_string())
         {
             *lobby = None;
-            true;
-            break;
+            return true;
         }
     }
     false
@@ -812,17 +812,6 @@ fn handle_connection(
     let mut user_connected = User { user: None };
     let mut connected_to_a_lobby = false;
     let mut lobby: Option<String> = None;
-    // let mut rng = OsRng;
-    // let bits = 1024;
-    // let private_key = RSAPrivateKey::new(&mut rng, bits).expect("Generation failed!");
-    //let public_key: RSAPublicKey = private_key.clone().into();
-
-    // let private_key_bytes = private_key.to_pkcs1().expect("Failed to serialize private key");
-
-    // let key_size = private_key_bytes.len() as u32;
-    // stream.write_all(&key_size.to_be_bytes()).expect("Failed to send key size");
-    // stream.write_all(&private_key_bytes).expect("Failed to send private key");
-
     loop {
         let _ = connected;
         match stream.read(&mut buffer) {
@@ -833,7 +822,6 @@ fn handle_connection(
                     println!("Client disconnected");
                     break;
                 }
-                //let mut buffer = private_key.decrypt(PaddingScheme::new_pkcs1v15_encrypt(), &message_decrypted).expect("Decryption failed!");
 
                 let msg = String::from_utf8(buffer[..bytes_read].to_vec()).unwrap();
                 let msg_clone = msg.clone();
@@ -853,6 +841,7 @@ fn handle_connection(
                         "-historylobby" => CommandType::HistoryLobby,
                         "-historyuser" => CommandType::HistoryUser,
                         "-reply" => CommandType::Reply,
+                        "-quit" => CommandType::Quit,
                         _ => CommandType::Unknown,
                     };
 
@@ -867,16 +856,25 @@ fn handle_connection(
                     match command_type {
                         CommandType::Help => {
                             let mut command =
-                                Commands::new(socket_addr, command_type, subtext, None,None);
+                                Commands::new(socket_addr, command_type, subtext, None, None);
                             command.execute_command(&mut stream);
+                        }
+                        CommandType::Quit => {
+                            let mut command =
+                                Commands::new(socket_addr, command_type, subtext, None, None);
+                            command.execute_command(&mut stream);
+                            let _ = remove_login(socket_addr, user_connected.user.unwrap_or_default()); // !!!
+                            let _ = delete_client(socket_addr); // !!!
+                            println!("Client disconnected");
+                            break;
                         }
                         CommandType::Inbox => {
                             let mut command = Commands::new(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                Some(user_connected.user.clone().unwrap_or_default()), 
-                                None
+                                Some(user_connected.user.clone().unwrap_or_default()),
+                                None,
                             );
                             command.execute_command(&mut stream);
                         }
@@ -885,8 +883,8 @@ fn handle_connection(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                user_connected.user.clone(), 
-                                None
+                                user_connected.user.clone(),
+                                None,
                             );
                             command.execute_command(&mut stream);
                         }
@@ -895,7 +893,7 @@ fn handle_connection(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                Some(user_connected.user.clone().unwrap_or_default()), 
+                                Some(user_connected.user.clone().unwrap_or_default()),
                                 None,
                             );
                             if command.execute_command(&mut stream) {
@@ -908,7 +906,8 @@ fn handle_connection(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                user_connected.user.clone(),None
+                                user_connected.user.clone(),
+                                None,
                             );
                             command.execute_command(&mut stream);
                         }
@@ -917,7 +916,8 @@ fn handle_connection(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                user_connected.user.clone(), None
+                                user_connected.user.clone(),
+                                None,
                             );
                             command.execute_command(&mut stream);
                         }
@@ -926,37 +926,38 @@ fn handle_connection(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                user_connected.user.clone(), None
+                                user_connected.user.clone(),
+                                None,
                             );
                             if connected {
                                 if command.execute_command(&mut stream) {}
-                            } else {
-                                if let Err(er) = stream.write_all(b"\nUser not connected\n ") {
+                            } else if let Err(er) = stream.write_all(b"\nUser not connected\n ") {
                                     eprintln!("Error writing to client: {er}");
                                 }
-                            }
+                            
                         }
                         CommandType::DeleteLobby => {
                             let mut command: Commands = Commands::new(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                user_connected.user.clone(), None
+                                user_connected.user.clone(),
+                                None,
                             );
                             if connected {
                                 command.execute_command(&mut stream);
-                            } else {
-                                if let Err(er) = stream.write_all(b"\nUser not connected\n ") {
+                            } else if let Err(er) = stream.write_all(b"\nUser not connected\n ") {
                                     eprintln!("Error writing to client: {er}");
                                 }
-                            }
+                            
                         }
                         CommandType::JoinLobby => {
                             let mut command: Commands = Commands::new(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                user_connected.user.clone(), None
+                                user_connected.user.clone(),
+                                None,
                             );
                             if connected {
                                 if command.execute_command(&mut stream) {
@@ -971,26 +972,25 @@ fn handle_connection(
                                         if let Err(er) = stream.write_all(b"\n--- CHAT GROUP ---\n For quit this session, use -quitlobby\n") {
                                             eprintln!("Error writing to client: {er}");
                                         }
-                                    } else {
-                                        if let Err(er) = stream.write_all(
+                                    } else if let Err(er) = stream.write_all(
                                             b"\nYou are in a current lobby! Try -exit lobby\n ",
                                         ) {
                                             eprintln!("Error writing to client: {er}");
-                                        }
+                                        
                                     }
                                 }
-                            } else {
-                                if let Err(er) = stream.write_all(b"\nUser not connected\n ") {
+                            } else if let Err(er) = stream.write_all(b"\nUser not connected\n ") {
                                     eprintln!("Error writing to client: {er}");
                                 }
-                            }
+                            
                         }
                         CommandType::Login => {
                             let mut command = Commands::new(
                                 socket_addr,
                                 command_type,
                                 subtext,
-                                Some(rest_of_message_clone), None
+                                Some(rest_of_message_clone),
+                                None,
                             );
                             if command.execute_command(&mut stream) {
                                 user_connected.user = Some(rest_of_message.clone());
@@ -1010,7 +1010,7 @@ fn handle_connection(
                                     let _ = remove_login(
                                         socket_addr,
                                         user_connected.user.clone().unwrap_or_default(),
-                                    ); // !!!
+                                    ); 
                                     let _ = delete_client(socket_addr); // !!!
                                     remove_user_from_lobby(socket_addr, connection_manager.clone());
                                     println!("Client disconnected");
@@ -1031,45 +1031,42 @@ fn handle_connection(
                                         connection_manager.clone(),
                                     );
                                     connected_to_a_lobby = false;
-                                    if let Err(err) = stream.write_all(b"Disconnected successfully from lobby!\n Continue with -help to see available commands!"){
+                                    if let Err(err) = stream.write_all(b"\nDisconnected successfully from lobby!\n Continue with -help to see available commands!\n"){
                                         eprintln!("Error writing to client: {err}");
                                     }
                                     lobby = None;
                                     break;
                                 } else if comm == "-reply" {
-                                        let mut command: Commands = Commands::new(
-                                            socket_addr,
-                                            CommandType::Reply,
-                                            message_to_send.clone(),
-                                            lobby.clone(),
-                                            Some(connection_manager.clone()),
-                                        );
-                                        if connected {
-                                            command.execute_command(&mut stream);
-                                        } else {
-                                            if let Err(er) =
-                                                stream.write_all(b"\nUser not connected\n ")
-                                            {
-                                                eprintln!("Error writing to client: {er}");
-                                            }
+                                    let mut command: Commands = Commands::new(
+                                        socket_addr,
+                                        CommandType::Reply,
+                                        message_to_send.clone(),
+                                        lobby.clone(),
+                                        Some(connection_manager.clone()),
+                                    );
+                                    if connected {
+                                        command.execute_command(&mut stream);
+                                    } else if let Err(er) =
+                                            stream.write_all(b"\nUser not connected\n ")
+                                        {
+                                            eprintln!("Error writing to client: {er}");
                                         }
-                                    }
-                                else {
-
-                                write_to_history_lobby(
-                                    rest_of_message.clone(),
-                                    message_to_send
-                                        .clone()
-                                        .trim_matches(|c| c == ' ' || c == '\0')
-                                        .to_string(),
-                                );
-                                send(
-                                    rest_of_message.clone(),
-                                    message_to_send,
-                                    connection_manager.clone(),
-                                    socket_addr,
-                                );
-                            }
+                                    
+                                } else {
+                                    write_to_history_lobby(
+                                        rest_of_message.clone(),
+                                        message_to_send
+                                            .clone()
+                                            .trim_matches(|c| c == ' ' || c == '\0')
+                                            .to_string(),
+                                    );
+                                    send(
+                                        rest_of_message.clone(),
+                                        message_to_send,
+                                        connection_manager.clone(),
+                                        socket_addr,
+                                    );
+                                }
                             }
                             Err(err) => {
                                 println!("Error reading from the client: {}", err);
