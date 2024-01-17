@@ -10,8 +10,21 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 
-#[derive(Debug, PartialEq)]
+// fn generate_random_key(key_length: usize) -> Vec<u8> {
+//     (0..key_length).map(|_| rand::thread_rng().gen()).collect()
+// }
 
+fn encrypt_decrypt(data: &[u8], key: &[u8]) -> Vec<u8> {
+    if key.is_empty() {
+        panic!("Key cannot be empty.");
+    }
+    data.iter()
+        .zip(key.iter().cycle())
+        .map(|(&byte, &key_byte)| byte ^ key_byte)
+        .collect()
+}
+
+#[derive(Debug, PartialEq)]
 enum CommandType {
     Help,
     Login,
@@ -100,10 +113,8 @@ impl Commands {
         }
         true
     }
-    fn quit(&mut self, stream: &mut TcpStream)
-    {
-        if let Err(er) = stream.write_all(b"\n Deconnected successfully from server!\n")
-        {
+    fn quit(&mut self, stream: &mut TcpStream) {
+        if let Err(er) = stream.write_all(b"\n Deconnected successfully from server!\n") {
             eprintln!("Error writing to client: {er}");
         }
     }
@@ -164,9 +175,8 @@ impl Commands {
                 eprintln!("Error writing to client: {}", err);
             }
         } else if let Err(err) = stream.write_all(b"\nHistory unavailable!\n") {
-                eprintln!("Error writing to client: {}", err);
-            }
-        
+            eprintln!("Error writing to client: {}", err);
+        }
     }
 
     fn historyuser(&mut self, stream: &mut TcpStream) {
@@ -213,9 +223,8 @@ impl Commands {
                 eprintln!("Error writing to client: {}", err);
             }
         } else if let Err(err) = stream.write_all(b"\nHistory unavailable!\n") {
-                eprintln!("Error writing to client: {}", err);
-            }
-        
+            eprintln!("Error writing to client: {}", err);
+        }
     }
     fn historylobby(&mut self, stream: &mut TcpStream) {
         let name_lobby: String = self
@@ -259,9 +268,8 @@ impl Commands {
                 eprintln!("Error writing to client: {}", err);
             }
         } else if let Err(err) = stream.write_all(b"\nHistory unavailable!\n") {
-                eprintln!("Error writing to client: {}", err);
-            }
-        
+            eprintln!("Error writing to client: {}", err);
+        }
     }
     fn deletelobby(&mut self, stream: &mut TcpStream) {
         let mut name_lobby = self.command_received.split(" \0");
@@ -287,15 +295,13 @@ impl Commands {
                     eprintln!("Error writing to client: {er}");
                 }
             } else if let Err(er) = stream.write_all(b"\nLobby doesn't exist!\n") {
-                    eprintln!("Error writing to client: {er}");
-                }
-            
-        } else if let Err(er) =
-                stream.write_all(b"\nName for lobby invalid! Try -delete <name_for_lobby>\n")
-            {
                 eprintln!("Error writing to client: {er}");
             }
-        
+        } else if let Err(er) =
+            stream.write_all(b"\nName for lobby invalid! Try -delete <name_for_lobby>\n")
+        {
+            eprintln!("Error writing to client: {er}");
+        }
     }
 
     fn joinlobby(&mut self, stream: &mut TcpStream) -> bool {
@@ -326,11 +332,11 @@ impl Commands {
             }
             return false;
         } else if let Err(er) =
-                stream.write_all(b"\nName for lobby invalid! Try -join <name_for_lobby>\n")
-            {
-                eprintln!("Error writing to client: {er}");
-            }
-        
+            stream.write_all(b"\nName for lobby invalid! Try -join <name_for_lobby>\n")
+        {
+            eprintln!("Error writing to client: {er}");
+        }
+
         false
     }
     fn createlobby(&mut self, stream: &mut TcpStream) {
@@ -363,11 +369,10 @@ impl Commands {
                 eprintln!("Error writing to client: {er}");
             }
         } else if let Err(er) =
-                stream.write_all(b"\nName for lobby invalid! Try -create <name_for_lobby>\n")
-            {
-                eprintln!("Error writing to client: {er}");
-            }
-        
+            stream.write_all(b"\nName for lobby invalid! Try -create <name_for_lobby>\n")
+        {
+            eprintln!("Error writing to client: {er}");
+        }
     }
     fn help(&mut self, stream: &mut TcpStream) {
         if let Err(err) = stream.write_all(b"       --- commands --- \n -help \n -register <username> \n -login <usermane> \n -logout \n -send <username> <message> \n -inbox \n -join <lobby \n -create <lobby> \n -delete <lobby> \n -historylobby <lobby> \n -historyuser \n -quitlobby \n -reply <user> <message> \n -quit\n") 
@@ -807,11 +812,18 @@ fn handle_connection(
     socket_addr: std::net::SocketAddr,
     connection_manager: Arc<Mutex<ConnectionManager>>,
 ) {
+    let my_key: [u8; 30] = [
+        245, 44, 154, 236, 202, 228, 72, 138, 13, 89, 221, 96, 6, 228, 241, 17, 100, 147, 7, 91,
+        192, 15, 168, 238, 44, 58, 106, 209, 155, 162,
+    ];
+
     let mut buffer = [0; 1024];
     let mut connected = false;
     let mut user_connected = User { user: None };
     let mut connected_to_a_lobby = false;
     let mut lobby: Option<String> = None;
+
+    //let key = generate_random_key(30);
     loop {
         let _ = connected;
         match stream.read(&mut buffer) {
@@ -822,8 +834,8 @@ fn handle_connection(
                     println!("Client disconnected");
                     break;
                 }
-
-                let msg = String::from_utf8(buffer[..bytes_read].to_vec()).unwrap();
+                let msg = encrypt_decrypt(buffer.as_slice(), &my_key);
+                let msg = String::from_utf8_lossy(&msg[..bytes_read]).to_string();
                 let msg_clone = msg.clone();
                 println!("Received: {}, {}", bytes_read, msg);
                 let mut parts = msg.split(|c| c == ' ' || c == '\0');
@@ -846,7 +858,6 @@ fn handle_connection(
                     };
 
                     let rest_of_message = parts.next().unwrap().to_string();
-                    println!("{}", rest_of_message);
                     let subtext = if let Some(space_index) = msg_clone.find(' ') {
                         msg_clone[space_index + 1..].to_string()
                     } else {
@@ -863,7 +874,8 @@ fn handle_connection(
                             let mut command =
                                 Commands::new(socket_addr, command_type, subtext, None, None);
                             command.execute_command(&mut stream);
-                            let _ = remove_login(socket_addr, user_connected.user.unwrap_or_default()); // !!!
+                            let _ =
+                                remove_login(socket_addr, user_connected.user.unwrap_or_default()); // !!!
                             let _ = delete_client(socket_addr); // !!!
                             println!("Client disconnected");
                             break;
@@ -932,9 +944,8 @@ fn handle_connection(
                             if connected {
                                 if command.execute_command(&mut stream) {}
                             } else if let Err(er) = stream.write_all(b"\nUser not connected\n ") {
-                                    eprintln!("Error writing to client: {er}");
-                                }
-                            
+                                eprintln!("Error writing to client: {er}");
+                            }
                         }
                         CommandType::DeleteLobby => {
                             let mut command: Commands = Commands::new(
@@ -947,9 +958,8 @@ fn handle_connection(
                             if connected {
                                 command.execute_command(&mut stream);
                             } else if let Err(er) = stream.write_all(b"\nUser not connected\n ") {
-                                    eprintln!("Error writing to client: {er}");
-                                }
-                            
+                                eprintln!("Error writing to client: {er}");
+                            }
                         }
                         CommandType::JoinLobby => {
                             let mut command: Commands = Commands::new(
@@ -973,16 +983,14 @@ fn handle_connection(
                                             eprintln!("Error writing to client: {er}");
                                         }
                                     } else if let Err(er) = stream.write_all(
-                                            b"\nYou are in a current lobby! Try -exit lobby\n ",
-                                        ) {
-                                            eprintln!("Error writing to client: {er}");
-                                        
+                                        b"\nYou are in a current lobby! Try -exit lobby\n ",
+                                    ) {
+                                        eprintln!("Error writing to client: {er}");
                                     }
                                 }
                             } else if let Err(er) = stream.write_all(b"\nUser not connected\n ") {
-                                    eprintln!("Error writing to client: {er}");
-                                }
-                            
+                                eprintln!("Error writing to client: {er}");
+                            }
                         }
                         CommandType::Login => {
                             let mut command = Commands::new(
@@ -1010,7 +1018,7 @@ fn handle_connection(
                                     let _ = remove_login(
                                         socket_addr,
                                         user_connected.user.clone().unwrap_or_default(),
-                                    ); 
+                                    );
                                     let _ = delete_client(socket_addr); // !!!
                                     remove_user_from_lobby(socket_addr, connection_manager.clone());
                                     println!("Client disconnected");
@@ -1047,11 +1055,10 @@ fn handle_connection(
                                     if connected {
                                         command.execute_command(&mut stream);
                                     } else if let Err(er) =
-                                            stream.write_all(b"\nUser not connected\n ")
-                                        {
-                                            eprintln!("Error writing to client: {er}");
-                                        }
-                                    
+                                        stream.write_all(b"\nUser not connected\n ")
+                                    {
+                                        eprintln!("Error writing to client: {er}");
+                                    }
                                 } else {
                                     write_to_history_lobby(
                                         rest_of_message.clone(),
